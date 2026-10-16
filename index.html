@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Symulator Równania Zasięgu LiDAR (McManamon, 2019)</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 antialiased min-h-screen flex items-center justify-center p-6">
+  <div class="max-w-4xl w-full bg-slate-900 text-slate-100 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-5">
+    
+    <!-- Header & Formula -->
+    <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-4">
+      <div>
+        <h1 class="text-slate-100 font-bold text-xl">Symulator Równania Zasięgu LiDAR (Link Budget)</h1>
+        <p class="text-slate-400 text-sm">Model fizyczny wg P. F. McManamona (LiDAR Technologies and Systems, 2019)</p>
+      </div>
+      <div id="formulaBox" class="bg-slate-950 border border-slate-800 px-4 py-2 rounded-xl font-mono text-sm">
+        P<sub>r</sub> = P<sub>t</sub> · (ρ · A<sub>rec</sub>) / (π · <span class="text-sky-400 font-bold">R²</span>) · η<sub>atm</sub>² · η<sub>sys</sub>
+      </div>
+    </div>
+
+    <!-- Animation Canvas -->
+    <div class="relative rounded-xl overflow-hidden border border-slate-800 bg-slate-950">
+      <canvas id="lidarCanvas" width="840" height="220" class="w-full h-[220px] block"></canvas>
+      <div class="absolute top-3 left-3.5 flex items-center gap-4 text-xs">
+        <span class="flex items-center gap-1.5 font-medium text-slate-300">
+          <span class="w-3 h-3 rounded-full bg-red-500 inline-block"></span> Impuls nadawany (P<sub>t</sub>)
+        </span>
+        <span class="flex items-center gap-1.5 font-medium text-slate-300">
+          <span class="w-3 h-3 rounded-full bg-emerald-400 inline-block"></span> Fotony odbite (P<sub>r</sub>)
+        </span>
+      </div>
+      <div id="statusBadge" class="absolute top-3 right-3.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+        ✓ DETEKCJA PUNKTU (X,Y,Z)
+      </div>
+    </div>
+
+    <!-- Controls & Live Energy Meter -->
+    <div class="grid grid-cols-1 md:grid-cols-12 gap-4 items-center pt-1">
+      
+      <!-- Sliders (8 cols) -->
+      <div class="md:col-span-8 grid grid-cols-2 gap-x-5 gap-y-3 text-xs">
+        
+        <!-- Target Mode -->
+        <div class="col-span-2 flex items-center justify-between bg-slate-950 p-2 rounded-xl border border-slate-800">
+          <span class="font-medium pl-2 text-slate-300">Typ obiektu (Cel):</span>
+          <div class="flex gap-1.5">
+            <button id="btnExtended" class="px-3 py-1.5 rounded-lg font-semibold bg-sky-500 text-slate-950 transition">
+              Rozległy: Grunt / Budynek (1/R²)
+            </button>
+            <button id="btnPoint" class="px-3 py-1.5 rounded-lg font-semibold text-slate-400 hover:text-slate-100 transition">
+              Punktowy: Przewód / Gałąź (1/R⁴)
+            </button>
+          </div>
+        </div>
+
+        <!-- Distance R -->
+        <div>
+          <div class="flex justify-between mb-1">
+            <label class="text-slate-400">Odległość (R):</label>
+            <span id="valR" class="font-mono font-semibold text-slate-200">100 m</span>
+          </div>
+          <input id="sliderR" type="range" min="40" max="250" value="100" class="w-full accent-sky-500 cursor-pointer">
+        </div>
+
+        <!-- Reflectivity -->
+        <div>
+          <div class="flex justify-between mb-1">
+            <label class="text-slate-400">Refleksyjność celu (ρ / σ):</label>
+            <span id="valRho" class="font-mono font-semibold text-slate-200">70% (Roślinność)</span>
+          </div>
+          <input id="sliderRho" type="range" min="10" max="95" value="70" class="w-full accent-emerald-500 cursor-pointer">
+        </div>
+
+        <!-- Atmosphere -->
+        <div>
+          <div class="flex justify-between mb-1">
+            <label class="text-slate-400">Transmisja atmosfery (η<sub>atm</sub>):</label>
+            <span id="valAtm" class="font-mono font-semibold text-slate-200">90% (Czysto)</span>
+          </div>
+          <input id="sliderAtm" type="range" min="30" max="100" value="90" class="w-full accent-amber-500 cursor-pointer">
+        </div>
+
+        <!-- Aperture -->
+        <div>
+          <div class="flex justify-between mb-1">
+            <label class="text-slate-400">Apertura odbiornika (A<sub>rec</sub>):</label>
+            <span id="valAper" class="font-mono font-semibold text-slate-200">1.0x</span>
+          </div>
+          <input id="sliderAper" type="range" min="5" max="20" value="10" class="w-full accent-purple-500 cursor-pointer">
+        </div>
+      </div>
+
+      <!-- Energy Link Budget Gauge (4 cols) -->
+      <div class="md:col-span-4 bg-slate-950 border border-slate-800 rounded-xl p-3.5 flex flex-col justify-between h-full space-y-3 text-xs">
+        <div class="flex justify-between items-center">
+          <span class="text-slate-400 font-medium">Odebrany sygnał (P<sub>r</sub>):</span>
+          <span id="photonCount" class="font-mono font-bold text-base text-emerald-400">480 fotonów</span>
+        </div>
+        
+        <!-- Bar -->
+        <div class="relative w-full h-6 bg-slate-900 rounded-lg overflow-hidden border border-slate-800">
+          <!-- Noise threshold line -->
+          <div class="absolute top-0 bottom-0 left-[22%] w-0.5 bg-amber-400 z-10" title="Próg szumu"></div>
+          <div id="signalBar" class="h-full bg-emerald-500 transition-all duration-150" style="width: 65%;"></div>
+        </div>
+
+        <div class="flex justify-between text-slate-400">
+          <span class="text-amber-400 font-medium">▲ Próg szumu (SNR=1)</span>
+          <span>Czas Δt: <strong id="tofVal" class="font-mono text-slate-200">0.67 µs</strong></span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('lidarCanvas');
+    const ctx = canvas.getContext('2d');
+
+    let isExtended = true;
+    let R = 100;
+    let rho = 0.70;
+    let atm = 0.90;
+    let aper = 1.0;
+
+    let pulseX = 95;
+    let pulseDir = 1;
+    let particles = [];
+
+    const btnExtended = document.getElementById('btnExtended');
+    const btnPoint = document.getElementById('btnPoint');
+    const formulaBox = document.getElementById('formulaBox');
+    const sliderR = document.getElementById('sliderR');
+    const sliderRho = document.getElementById('sliderRho');
+    const sliderAtm = document.getElementById('sliderAtm');
+    const sliderAper = document.getElementById('sliderAper');
+
+    const valR = document.getElementById('valR');
+    const valRho = document.getElementById('valRho');
+    const valAtm = document.getElementById('valAtm');
+    const valAper = document.getElementById('valAper');
+    const photonCountEl = document.getElementById('photonCount');
+    const signalBar = document.getElementById('signalBar');
+    const statusBadge = document.getElementById('statusBadge');
+    const tofVal = document.getElementById('tofVal');
+
+    function computePhotons() {
+      const normR = R / 100;
+      const distFactor = isExtended ? (1 / Math.pow(normR, 2)) : (0.55 / Math.pow(normR, 4));
+      const rawPhotons = 850 * distFactor * rho * Math.pow(atm, 2) * aper;
+      return Math.max(2, Math.round(rawPhotons));
+    }
+
+    function updateUI() {
+      R = parseFloat(sliderR.value);
+      rho = parseFloat(sliderRho.value) / 100;
+      atm = parseFloat(sliderAtm.value) / 100;
+      aper = parseFloat(sliderAper.value) / 10;
+
+      valR.textContent = `${R} m`;
+      
+      let rhoLabel = 'Średnia';
+      if (rho < 0.25) rhoLabel = 'Asfalt / Woda';
+      else if (rho < 0.55) rhoLabel = 'Suchy grunt';
+      else if (rho < 0.8) rhoLabel = 'Roślinność (NIR)';
+      else rhoLabel = 'Śnieg / Odblask';
+      valRho.textContent = `${Math.round(rho * 100)}% (${rhoLabel})`;
+
+      let atmLabel = 'Czysto';
+      if (atm < 0.55) atmLabel = 'Gęsta mgła/deszcz';
+      else if (atm < 0.8) atmLabel = 'Zamglenie / Aerozole';
+      valAtm.textContent = `${Math.round(atm * 100)}% (${atmLabel})`;
+
+      valAper.textContent = `${aper.toFixed(1)}x`;
+
+      const tof = (2 * R / 300).toFixed(2);
+      tofVal.textContent = `${tof} µs`;
+
+      const photons = computePhotons();
+      const threshold = 120;
+      const pct = Math.min(100, Math.max(3, (photons / 550) * 100));
+
+      photonCountEl.textContent = `${photons} fotonów`;
+      signalBar.style.width = `${pct}%`;
+
+      if (photons >= threshold) {
+        signalBar.className = 'h-full bg-emerald-500 transition-all duration-150';
+        photonCountEl.className = 'font-mono font-bold text-base text-emerald-400';
+        statusBadge.className = 'absolute top-3 right-3.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30';
+        statusBadge.textContent = '✓ DETEKCJA PUNKTU (X,Y,Z)';
+      } else {
+        signalBar.className = 'h-full bg-rose-500 transition-all duration-150';
+        photonCountEl.className = 'font-mono font-bold text-base text-rose-400';
+        statusBadge.className = 'absolute top-3 right-3.5 px-3 py-1 rounded-full text-xs font-semibold bg-rose-500/20 text-rose-400 border border-rose-500/30';
+        statusBadge.textContent = '✕ BRAK PUNKTU (Poniżej progu szumu)';
+      }
+    }
+
+    btnExtended.addEventListener('click', () => {
+      isExtended = true;
+      btnExtended.className = 'px-3 py-1.5 rounded-lg font-semibold bg-sky-500 text-slate-950 transition';
+      btnPoint.className = 'px-3 py-1.5 rounded-lg font-semibold text-slate-400 hover:text-slate-100 transition';
+      formulaBox.innerHTML = 'P<sub>r</sub> = P<sub>t</sub> · (ρ · A<sub>rec</sub>) / (π · <span class="text-sky-400 font-bold">R²</span>) · η<sub>atm</sub>² · η<sub>sys</sub>';
+      updateUI();
+    });
+
+    btnPoint.addEventListener('click', () => {
+      isExtended = false;
+      btnPoint.className = 'px-3 py-1.5 rounded-lg font-semibold bg-sky-500 text-slate-950 transition';
+      btnExtended.className = 'px-3 py-1.5 rounded-lg font-semibold text-slate-400 hover:text-slate-100 transition';
+      formulaBox.innerHTML = 'P<sub>r</sub> = P<sub>t</sub> · (σ · A<sub>rec</sub>) / (π² · θ² · <span class="text-rose-400 font-bold">R⁴</span>) · η<sub>atm</sub>² · η<sub>sys</sub>';
+      updateUI();
+    });
+
+    [sliderR, sliderRho, sliderAtm, sliderAper].forEach(s => s.addEventListener('input', updateUI));
+
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      const sensorX = 85;
+      const centerY = 115;
+      const targetX = 160 + ((R - 40) / 210) * 610;
+      const beamHalfAngle = 0.085;
+      const footprintHalf = (targetX - sensorX) * beamHalfAngle;
+
+      // 1. Atmospheric haze
+      const hazeAlpha = (1 - atm) * 0.35;
+      if (hazeAlpha > 0.02) {
+        ctx.fillStyle = `rgba(148, 163, 184, ${hazeAlpha})`;
+        ctx.fillRect(sensorX + 20, 30, targetX - sensorX - 20, 160);
+      }
+
+      // 2. Diverging laser beam cone
+      ctx.beginPath();
+      ctx.moveTo(sensorX + 15, centerY);
+      ctx.lineTo(targetX, centerY - footprintHalf);
+      ctx.lineTo(targetX, centerY + footprintHalf);
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(239, 68, 68, 0.12)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(239, 68, 68, 0.35)';
+      ctx.setLineDash([4, 4]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // 3. Draw Target
+      if (isExtended) {
+        const wallH = Math.max(footprintHalf * 2 + 35, 105);
+        ctx.fillStyle = '#64748b';
+        ctx.fillRect(targetX, centerY - wallH / 2, 20, wallH);
+        ctx.fillStyle = 'rgba(239, 68, 68, 0.75)';
+        ctx.fillRect(targetX - 2, centerY - footprintHalf, 5, footprintHalf * 2);
+      } else {
+        ctx.beginPath();
+        ctx.arc(targetX, centerY, 7, 0, Math.PI * 2);
+        ctx.fillStyle = '#f59e0b';
+        ctx.fill();
+        ctx.strokeStyle = '#d97706';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+
+      // 4. Sensor & Aperture
+      const aperHeight = 28 * aper;
+      ctx.fillStyle = '#38bdf8';
+      ctx.fillRect(sensorX + 8, centerY - aperHeight / 2, 8, aperHeight);
+      ctx.fillStyle = '#334155';
+      ctx.fillRect(22, centerY - 24, 65, 48);
+      ctx.fillStyle = '#f8fafc';
+      ctx.font = 'bold 12px sans-serif';
+      ctx.fillText('LiDAR', 36, centerY + 4);
+
+      // 5. Pulse & Returning Photons
+      const speed = 7;
+      if (pulseDir === 1) {
+        pulseX += speed;
+        const currHalf = (pulseX - sensorX) * beamHalfAngle;
+
+        ctx.beginPath();
+        ctx.moveTo(pulseX, centerY - currHalf);
+        ctx.lineTo(pulseX, centerY + currHalf);
+        ctx.strokeStyle = '#ef4444';
+        ctx.lineWidth = 4;
+        ctx.shadowColor = '#ef4444';
+        ctx.shadowBlur = 12;
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+        ctx.lineWidth = 1;
+
+        if (pulseX >= targetX) {
+          pulseDir = -1;
+          const photons = computePhotons();
+          const numDots = Math.min(48, Math.max(2, Math.round(photons / 14)));
+          particles = [];
+          for (let i = 0; i < numDots; i++) {
+            const spreadY = (Math.random() - 0.5) * (aperHeight * 2.2);
+            particles.push({
+              x: targetX,
+              y: centerY + (isExtended ? (Math.random() - 0.5) * footprintHalf * 1.5 : 0),
+              vy: spreadY / ((targetX - sensorX) / speed),
+              alpha: Math.min(1, 0.35 + (photons / 500))
+            });
+          }
+        }
+      } else {
+        pulseX -= speed;
+        particles.forEach(p => {
+          p.x -= speed;
+          p.y += p.vy;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, 2.8, 0, Math.PI * 2);
+          ctx.fillStyle = `rgba(52, 211, 153, ${p.alpha})`;
+          ctx.fill();
+        });
+
+        if (pulseX <= sensorX + 15) {
+          pulseDir = 1;
+          pulseX = sensorX + 15;
+        }
+      }
+
+      // 6. Dimension line
+      const dimY = 198;
+      ctx.strokeStyle = '#94a3b8';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(sensorX + 12, dimY);
+      ctx.lineTo(targetX, dimY);
+      ctx.stroke();
+
+      ctx.fillStyle = '#cbd5e1';
+      ctx.font = '12px monospace';
+      ctx.fillText(`R = ${R} m (Średnica plamki: ${(footprintHalf * 0.04).toFixed(1)} m)`, (sensorX + targetX) / 2 - 90, dimY - 6);
+
+      requestAnimationFrame(draw);
+    }
+
+    updateUI();
+    requestAnimationFrame(draw);
+  </script>
+</body>
+</html>
